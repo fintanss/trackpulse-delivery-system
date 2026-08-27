@@ -1,0 +1,14 @@
+{
+  "name": "trackpulse-delivery",
+  "version": "1.0.0",
+  "description": "TrackPulse Real-Time Delivery Management Engine",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "dependencies": {
+    "express": "^4.19.2",
+    "mysql2": "^3.9.7",
+    "socket.io": "^4.7.5"
+  }
+}

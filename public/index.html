@@ -1,0 +1,333 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>TrackPulse | Control Dashboard</title>
+  <script src="/socket.io/socket.io.js"></script>
+  <style>
+    body { font-family: system-ui, -apple-system, sans-serif; margin: 0; padding: 24px; background: #0f172a; color: #f8fafc; }
+    header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 24px; border-bottom: 1px solid #1e293b; padding-bottom: 16px; }
+    h1 { margin: 0; font-size: 24px; color: #38bdf8; }
+    .status-pill { display: inline-flex; align-items: center; gap: 8px; font-size: 13px; color: #94a3b8; }
+    .dot { width: 8px; height: 8px; border-radius: 50%; background: #ef4444; }
+    .dot.online { background: #22c55e; }
+    .grid { display: grid; grid-template-columns: 320px 1fr; gap: 24px; }
+    .card { background: #1e293b; padding: 20px; border-radius: 12px; border: 1px solid #334155; }
+    h2 { margin-top: 0; font-size: 18px; color: #f1f5f9; margin-bottom: 16px; }
+    input, textarea, select, button { width: 100%; padding: 12px; margin-bottom: 12px; box-sizing: border-box; border-radius: 6px; border: 1px solid #475569; background: #0f172a; color: #f8fafc; font-size: 14px; }
+    select { cursor: pointer; }
+    button { background: #0284c7; color: white; border: none; cursor: pointer; font-weight: 600; }
+    button:hover { background: #0369a1; }
+    button:disabled { background: #334155; cursor: not-allowed; opacity: 0.6; }
+    table { width: 100%; border-collapse: collapse; margin-top: 8px; }
+    th, td { text-align: left; padding: 12px; border-bottom: 1px solid #334155; font-size: 14px; }
+    th { color: #94a3b8; font-size: 12px; text-transform: uppercase; }
+    .badge { padding: 4px 8px; border-radius: 6px; font-size: 11px; font-weight: 700; text-transform: uppercase; }
+    .status-CREATED { background: #3a2e10; color: #facc15; border: 1px solid #713f12; }
+    .status-ASSIGNED { background: #1e3a5f; color: #60a5fa; border: 1px solid #1d4ed8; }
+    .status-PICKED_UP { background: #14532d; color: #4ade80; border: 1px solid #15803d; }
+    .status-DELIVERED { background: #334155; color: #94a3b8; border: 1px solid #475569; }
+    .code-box { font-family: monospace; background: #0f172a; padding: 4px 8px; border-radius: 4px; color: #38bdf8; border: 1px solid #1e293b; }
+    .action-btn { padding: 6px 12px; margin: 0; font-size: 12px; width: auto; }
+    .secondary-btn { background: #334155; border: 1px solid #475569; }
+    .modal-overlay { display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.7); align-items: center; justify-content: center; z-index: 100; }
+    .modal-overlay.active { display: flex; }
+    .modal { background: #1e293b; padding: 24px; border-radius: 12px; max-width: 500px; width: 100%; border: 1px solid #334155; }
+    .log-item { padding: 8px 0; border-bottom: 1px solid #334155; font-size: 13px; }
+    .modal-actions { display: flex; gap: 8px; margin-top: 16px; }
+    .modal-actions button { margin-bottom: 0; }
+    #toastContainer { position: fixed; bottom: 24px; right: 24px; display: flex; flex-direction: column; gap: 10px; z-index: 1000; }
+    .toast { min-width: 260px; padding: 14px 18px; border-radius: 8px; font-size: 14px; color: #fff; opacity: 0; transform: translateY(12px); transition: opacity 0.25s, transform 0.25s; }
+    .toast.show { opacity: 1; transform: translateY(0); }
+    .toast-error { background: #881337; border: 1px solid #f43f5e; }
+    .toast-success { background: #065f46; border: 1px solid #10b981; }
+  </style>
+</head>
+<body>
+  <header>
+    <div>
+      <h1>TrackPulse</h1>
+      <div style="color: #94a3b8; font-size: 14px;">Real-Time Delivery Management Engine</div>
+    </div>
+    <div class="status-pill">
+      <div id="statusDot" class="dot"></div>
+      <span id="statusText">Connecting...</span>
+    </div>
+  </header>
+
+  <div class="grid">
+    <div class="card">
+      <h2>New Delivery Request</h2>
+      <form id="orderForm">
+        <input type="text" id="custName" placeholder="Customer Name" required>
+        <input type="text" id="custPhone" placeholder="Customer Phone" required>
+        <textarea id="address" placeholder="Delivery Address" rows="3" required></textarea>
+        <input type="text" id="item" placeholder="Item Description" required>
+        <button type="submit">Submit Request</button>
+      </form>
+    </div>
+
+    <div class="card">
+      <h2>Live Dispatch Queue</h2>
+      <table>
+        <thead>
+          <tr>
+            <th>ID</th>
+            <th>Customer</th>
+            <th>Item</th>
+            <th>Rider</th>
+            <th>Status</th>
+            <th>Code</th>
+            <th>Action</th>
+          </tr>
+        </thead>
+        <tbody id="deliveryTable"></tbody>
+      </table>
+    </div>
+  </div>
+
+  <!-- Rider Modal -->
+  <div id="riderModal" class="modal-overlay">
+    <div class="modal">
+      <h2>Assign Rider</h2>
+      <p style="color: #94a3b8; font-size: 14px; margin-bottom: 16px;">Select an available field rider for delivery <strong id="assignDeliveryId"></strong>:</p>
+      <select id="riderSelect"><option value="">Loading active riders...</option></select>
+      <div class="modal-actions">
+        <button id="confirmAssignBtn" onclick="confirmAssignment()">Confirm Assignment</button>
+        <button class="secondary-btn" onclick="closeRiderModal()">Cancel</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Logs Modal -->
+  <div id="logModal" class="modal-overlay">
+    <div class="modal">
+      <h2>Audit Log Timeline</h2>
+      <div id="logList"></div>
+      <button onclick="closeLogModal()" style="margin-top: 16px;">Close</button>
+    </div>
+  </div>
+
+  <div id="toastContainer"></div>
+
+  <script>
+    const socket = io();
+    let selectedDeliveryId = null;
+
+    function showToast(message, type = 'info') {
+      const container = document.getElementById('toastContainer');
+      const toast = document.createElement('div');
+      toast.className = `toast toast-${type}`;
+      toast.textContent = message;
+      container.appendChild(toast);
+      requestAnimationFrame(() => toast.classList.add('show'));
+      setTimeout(() => {
+        toast.classList.remove('show');
+        toast.addEventListener('transitionend', () => toast.remove());
+      }, 4000);
+    }
+
+    socket.on('connect', () => {
+      document.getElementById('statusDot').className = 'dot online';
+      document.getElementById('statusText').textContent = 'Live Sync Active';
+    });
+
+    socket.on('disconnect', () => {
+      document.getElementById('statusDot').className = 'dot';
+      document.getElementById('statusText').textContent = 'Disconnected';
+      showToast('Disconnected from server', 'error');
+    });
+
+    document.getElementById('orderForm').addEventListener('submit', async (e) => {
+      e.preventDefault();
+      
+      const payload = {
+        customer_name: document.getElementById('custName').value.trim(),
+        customer_phone: document.getElementById('custPhone').value.trim(),
+        delivery_address: document.getElementById('address').value.trim(),
+        item_description: document.getElementById('item').value.trim()
+      };
+
+      try {
+        const res = await fetch('/api/deliveries', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload)
+        });
+
+        if (res.ok) {
+          showToast('Delivery request created!', 'success');
+          e.target.reset();
+        } else {
+          const err = await res.json();
+          showToast(err.error || 'Submission failed', 'error');
+        }
+      } catch (err) {
+        showToast('Network error during request creation', 'error');
+      }
+    });
+
+    async function loadDeliveries() {
+      try {
+        const res = await fetch('/api/deliveries');
+        if (res.ok) {
+          const data = await res.json();
+          renderTable(data);
+        }
+      } catch (err) {
+        showToast('Failed to load delivery queue', 'error');
+      }
+    }
+
+    function renderTable(deliveries) {
+      const tbody = document.getElementById('deliveryTable');
+      tbody.innerHTML = deliveries.map(d => `
+        <tr>
+          <td>#${d.id}</td>
+          <td><strong>${d.customer_name}</strong><br><small style="color: #94a3b8;">${d.customer_phone}</small></td>
+          <td>${d.item_description}</td>
+          <td>${d.rider_name || '<em style="color:#64748b;">Unassigned</em>'}</td>
+          <td><span class="badge status-${d.status}">${d.status.replace('_', ' ')}</span></td>
+          <td><span class="code-box">${d.qr_verification_code}</span></td>
+          <td>
+            <div style="display: flex; gap: 4px;">
+              ${getActions(d)}
+              <button class="action-btn secondary-btn" onclick="showLogs(${d.id})">Logs</button>
+            </div>
+          </td>
+        </tr>
+      `).join('');
+    }
+
+    function getActions(d) {
+      if (d.status === 'CREATED') return `<button class="action-btn" onclick="openRiderModal(${d.id})">Assign</button>`;
+      if (d.status === 'ASSIGNED') return `<button class="action-btn" onclick="updateStatus(${d.id}, 'PICKED_UP')">Pick Up</button>`;
+      if (d.status === 'PICKED_UP') return `<button class="action-btn" onclick="completeDelivery(${d.id})">Verify</button>`;
+      return `<span style="color: #64748b; font-size: 12px;">Completed</span>`;
+    }
+
+    async function openRiderModal(deliveryId) {
+      selectedDeliveryId = deliveryId;
+      document.getElementById('assignDeliveryId').textContent = `#${deliveryId}`;
+      const select = document.getElementById('riderSelect');
+      const confirmBtn = document.getElementById('confirmAssignBtn');
+      
+      select.innerHTML = '<option value="">Loading active riders...</option>';
+      confirmBtn.disabled = true;
+      document.getElementById('riderModal').classList.add('active');
+      
+      try {
+        const res = await fetch('/api/riders');
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        
+        const riders = await res.json();
+        
+        if (!Array.isArray(riders) || riders.length === 0) {
+          select.innerHTML = '<option value="">No registered riders available</option>';
+          confirmBtn.disabled = true;
+        } else {
+          select.innerHTML = riders.map(r => `<option value="${r.id}">${r.full_name} (${r.phone_number})</option>`).join('');
+          confirmBtn.disabled = false;
+        }
+      } catch (err) {
+        select.innerHTML = `<option value="">Error loading riders</option>`;
+        confirmBtn.disabled = true;
+        showToast('Could not fetch riders', 'error');
+      }
+    }
+
+    function closeRiderModal() {
+      selectedDeliveryId = null;
+      document.getElementById('riderModal').classList.remove('active');
+    }
+
+    async function confirmAssignment() {
+      const riderId = document.getElementById('riderSelect').value;
+      if (!riderId) return;
+
+      try {
+        const res = await fetch(`/api/deliveries/${selectedDeliveryId}/assign`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ rider_id: parseInt(riderId, 10) })
+        });
+
+        if (res.ok) {
+          showToast(`Order #${selectedDeliveryId} assigned successfully`, 'success');
+          closeRiderModal();
+        } else {
+          const err = await res.json();
+          showToast(err.error || 'Assignment failed', 'error');
+        }
+      } catch (err) {
+        showToast('Server error during assignment', 'error');
+      }
+    }
+
+    async function updateStatus(id, status) {
+      try {
+        const res = await fetch(`/api/deliveries/${id}/status`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ status })
+        });
+
+        if (res.ok) {
+          showToast(`Order #${id} status updated`, 'success');
+        } else {
+          const err = await res.json();
+          showToast(err.error || 'Update failed', 'error');
+        }
+      } catch (err) {
+        showToast('Server communication error', 'error');
+      }
+    }
+
+    async function completeDelivery(id) {
+      const qr = prompt('Enter TrackPulse Verification Code:');
+      if (!qr) return;
+
+      try {
+        const res = await fetch(`/api/deliveries/${id}/status`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ status: 'DELIVERED', qr_code: qr })
+        });
+
+        if (res.ok) {
+          showToast(`Order #${id} verified and completed!`, 'success');
+        } else {
+          const err = await res.json();
+          showToast(err.error || 'Verification failed', 'error');
+        }
+      } catch (err) {
+        showToast('Server communication error', 'error');
+      }
+    }
+
+    async function showLogs(id) {
+      try {
+        const res = await fetch(`/api/deliveries/${id}/logs`);
+        const logs = await res.json();
+        document.getElementById('logList').innerHTML = logs.map(l => `
+          <div class="log-item">
+            <strong>${l.new_status}</strong> by ${l.user_name || 'System'}
+            <br><small style="color:#94a3b8;">${new Date(l.timestamp).toLocaleString()}</small>
+          </div>
+        `).join('');
+        document.getElementById('logModal').classList.add('active');
+      } catch (err) {
+        showToast('Unable to fetch logs', 'error');
+      }
+    }
+
+    function closeLogModal() {
+      document.getElementById('logModal').classList.remove('active');
+    }
+
+    socket.on('delivery:updated', () => loadDeliveries());
+    loadDeliveries();
+  </script>
+</body>
+</html>
